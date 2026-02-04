@@ -34,31 +34,50 @@ jobs:
   create-issue-on-failure:
     name: Create issue on failure
     runs-on: ubuntu-latest
-    needs: [min-version-policy, linkcheck]
-    if: failure() && github.event_name == 'schedule'
+    needs:
+      - min-version-policy
+      - linkcheck
+    # Always evaluate/run this job after dependencies finish (even if they failed)
+    if: ${{ always() }}
     permissions:
       issues: write
     steps:
-      - name: Create issue
+      - name: Create issue if any job failed
+        if: ${{ needs.min-version-policy.result == 'failure' || needs.linkcheck.result == 'failure' }}
         uses: actions/github-script@v7
         with:
           script: |
             const workflowUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const title = `CI Additional workflow failed - ${new Date().toISOString().split('T')[0]}`;
-            const body = `The [CI Additional workflow](${workflowUrl}) failed on its scheduled run.
+            const date = new Date().toISOString().split('T')[0];
 
-            **Workflow Run:** ${context.runId}
-            **Trigger:** ${context.eventName}
-            **Branch:** ${context.ref}
+            const results = {
+              'Minimum Version Policy': '${{ needs.min-version-policy.result }}',
+              'Docs link check': '${{ needs.linkcheck.result }}',
+            };
 
-            Please investigate the failure and fix the issues.
+            const failedJobs = Object.entries(results)
+              .filter(([, r]) => r === 'failure')
+              .map(([name]) => name);
 
-            _This issue was automatically created by the workflow._`;
+            const title = `CI Additional workflow failed - ${date}`;
+            const body = [
+              `The CI Additional workflow failed.`,
+              ``,
+              `Workflow run: ${workflowUrl}`,
+              `Trigger: ${context.eventName}`,
+              `Branch: ${context.ref}`,
+              ``,
+              `Failed jobs: ${failedJobs.join(', ')}`,
+              ``,
+              `Please investigate the failure and fix the issues.`,
+              ``,
+              `_This issue was automatically created by the workflow._`
+            ].join('\n');
 
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: title,
-              body: body,
-              labels: ['bug', 'automated']
-            });
+              title,
+              body,
+              labels: ['bug', 'automated'],
+            })
